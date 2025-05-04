@@ -43,6 +43,9 @@ export default function DoctorsPage() {
           headers.Authorization = `Bearer ${accessToken}`
         }
 
+        // Add logging to see the full URL being requested
+        console.log("Fetching doctors from:", `${API_URL}/doctors/profiles/`)
+        
         const response = await fetch(`${API_URL}/doctors/profiles/`, { headers })
         console.log("Doctors API response status:", response.status)
 
@@ -55,21 +58,68 @@ export default function DoctorsPage() {
 
           // Ensure doctorsList is an array
           if (Array.isArray(doctorsList)) {
-            setDoctors(doctorsList)
+            // Map backend doctor format to frontend expected format
+            const formattedDoctors = doctorsList.map(doctor => ({
+              id: doctor.id,
+              user: {
+                first_name: doctor.user?.first_name || doctor.first_name || "",
+                last_name: doctor.user?.last_name || doctor.last_name || "",
+              },
+              specialization: doctor.specialization || "",
+              consultation_fee: doctor.consultation_fee || 0,
+              license_number: doctor.license_number || "",
+              bio: doctor.bio || "",
+              rating: doctor.rating || 4.5,
+              available: doctor.available !== undefined ? doctor.available : true,
+            }));
+            
+            setDoctors(formattedDoctors)
           } else {
             console.error("Expected array but got:", typeof doctorsList)
-            // Fallback to sample doctors
-            setDoctors(getSampleDoctors())
+            toast({
+              variant: "destructive",
+              title: "Data Format Error",
+              description: "Received unexpected data format from server.",
+            })
+            // Only use sample data in development
+            if (process.env.NODE_ENV === "development") {
+              setDoctors(getSampleDoctors())
+            } else {
+              setDoctors([])
+            }
           }
         } else {
           console.error("Failed to fetch doctors:", response.status)
-          // For demo purposes, create some sample doctors
-          setDoctors(getSampleDoctors())
+          const errorText = await response.text()
+          console.error("Error response:", errorText)
+          
+          toast({
+            variant: "destructive",
+            title: "Failed to Load Doctors",
+            description: `Server returned ${response.status}: ${response.statusText}`,
+          })
+          
+          // Only use sample data in development
+          if (process.env.NODE_ENV === "development") {
+            setDoctors(getSampleDoctors())
+          } else {
+            setDoctors([])
+          }
         }
       } catch (error) {
         console.error("Error fetching doctors:", error)
-        // For demo purposes, create some sample doctors
-        setDoctors(getSampleDoctors())
+        toast({
+          variant: "destructive",
+          title: "Connection Error",
+          description: "Failed to connect to the server. Please try again later.",
+        })
+        
+        // Only use sample data in development
+        if (process.env.NODE_ENV === "development") {
+          setDoctors(getSampleDoctors())
+        } else {
+          setDoctors([])
+        }
       } finally {
         setIsLoading(false)
       }

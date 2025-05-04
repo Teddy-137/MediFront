@@ -120,51 +120,79 @@ export default function SkinDiagnosisPage() {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          // Don't set Content-Type for multipart/form-data
         },
         body: formData,
       })
 
       if (response.ok) {
         const data = await response.json()
-        setDiagnosisResult(data)
+        console.log("Diagnosis response:", data)
+        
+        // Transform backend response format to match frontend expected format
+        const transformedData = {
+          condition: data.diagnosis?.conditions?.[0] || "Unknown condition",
+          confidence: data.diagnosis?.confidence || 0.5,
+          description: "Description based on AI analysis of your skin condition.",
+          recommendations: data.diagnosis?.recommendations || ["Consult a dermatologist"],
+          severity: data.diagnosis?.urgency || "moderate",
+          similar_conditions: data.diagnosis?.conditions?.slice(1).map((name, index) => ({
+            name,
+            similarity: 0.8 - (index * 0.2)
+          })) || [],
+        }
+        
+        setDiagnosisResult(transformedData)
         toast({
           title: "Diagnosis Complete",
           description: "Your skin image has been analyzed successfully.",
         })
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || "Failed to analyze the image. Please try again.")
+        let errorMessage = "Failed to analyze the image. Please try again."
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.detail || errorData.error || errorMessage
+        } catch (e) {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage
+        }
+        
+        setError(errorMessage)
         toast({
           variant: "destructive",
           title: "Diagnosis Failed",
-          description: "There was an error analyzing your image.",
+          description: errorMessage,
         })
+        
+        // Only use demo data in development environment
+        if (process.env.NODE_ENV === "development") {
+          console.log("Using demo data in development mode")
+          setDiagnosisResult({
+            condition: "Eczema",
+            confidence: 0.87,
+            description:
+              "Eczema is a condition that causes the skin to become itchy, red, dry and cracked. It's more common in children, often developing before their first birthday.",
+            recommendations: [
+              "Keep the affected area moisturized",
+              "Avoid scratching the affected area",
+              "Use mild soaps and detergents",
+              "Apply prescribed topical treatments as directed",
+            ],
+            severity: "moderate",
+            similar_conditions: [
+              { name: "Contact Dermatitis", similarity: 0.65 },
+              { name: "Psoriasis", similarity: 0.42 },
+            ],
+          })
+        }
       }
     } catch (error) {
+      console.error("Error during diagnosis:", error)
       setError("An error occurred. Please try again.")
       toast({
         variant: "destructive",
         title: "Error",
         description: "An unexpected error occurred. Please try again.",
-      })
-
-      // For demo purposes, create a sample diagnosis result
-      setDiagnosisResult({
-        condition: "Eczema",
-        confidence: 0.87,
-        description:
-          "Eczema is a condition that causes the skin to become itchy, red, dry and cracked. It's more common in children, often developing before their first birthday.",
-        recommendations: [
-          "Keep the affected area moisturized",
-          "Avoid scratching the affected area",
-          "Use mild soaps and detergents",
-          "Apply prescribed topical treatments as directed",
-        ],
-        severity: "moderate",
-        similar_conditions: [
-          { name: "Contact Dermatitis", similarity: 0.65 },
-          { name: "Psoriasis", similarity: 0.42 },
-        ],
       })
     } finally {
       setIsLoading(false)

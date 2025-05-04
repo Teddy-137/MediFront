@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/components/ui/use-toast"
 import { Activity, Search, Loader2 } from "lucide-react"
+import { fetchWithRetry, safeParseJSON, extractErrorMessage } from "@/lib/api-utils"
 
 type Symptom = {
   id: number
@@ -35,31 +36,105 @@ export default function SymptomCheckerPage() {
   useEffect(() => {
     const fetchSymptoms = async () => {
       try {
+        setIsLoading(true)
         const accessToken = localStorage.getItem("accessToken")
-        const headers: HeadersInit = {}
+        const headers: HeadersInit = {
+          "Content-Type": "application/json"
+        }
 
         if (accessToken) {
           headers.Authorization = `Bearer ${accessToken}`
         }
 
-        const response = await fetch(`${API_URL}/health/symptoms/`, { headers })
+        console.log(`Fetching symptoms from: ${API_URL}/health/symptoms/`)
+        
+        // Use fetchWithRetry for better handling of rate limits
+        const response = await fetchWithRetry(
+          `${API_URL}/health/symptoms/`, 
+          { method: "GET", headers },
+          3 // Max retries
+        )
+        
+        console.log(`Symptoms API response status: ${response.status}`)
 
         if (response.ok) {
-          const data = await response.json()
-          setSymptoms(data.results || [])
+          const responseText = await response.text()
+          // Use safeParseJSON to handle empty responses
+          const data = safeParseJSON(responseText, {})
+          console.log("Symptoms data:", data)
+          
+          // Handle both paginated and non-paginated responses
+          const symptomsList = data.results || data || []
+          
+          if (Array.isArray(symptomsList)) {
+            // Ensure each symptom has an id
+            const processedSymptoms = symptomsList.map((symptom, index) => ({
+              ...symptom,
+              id: symptom.id || index + 1,
+              description: symptom.description || "No description available"
+            }))
+            setSymptoms(processedSymptoms)
+          } else {
+            console.error("Expected array but got:", typeof symptomsList)
+            setSymptoms([])
+            toast({
+              variant: "destructive",
+              title: "Data Format Error",
+              description: "Received unexpected data format from server.",
+            })
+          }
         } else {
+          // Use extractErrorMessage for consistent error handling
+          const errorMessage = await extractErrorMessage(
+            response, 
+            "Failed to load symptoms. Please try again."
+          )
+          
+          console.error("Failed to fetch symptoms:", response.status, errorMessage)
+          
           toast({
             variant: "destructive",
             title: "Error",
-            description: "Failed to load symptoms. Please try again.",
+            description: errorMessage,
           })
+          
+          // Use sample data in development for testing
+          if (process.env.NODE_ENV === "development") {
+            console.log("Using sample symptoms data in development mode")
+            setSymptoms([
+              { id: 1, name: "Headache", description: "Pain in the head or upper neck" },
+              { id: 2, name: "Fever", description: "Elevated body temperature above the normal range" },
+              { id: 3, name: "Cough", description: "Sudden expulsion of air from the lungs" },
+              { id: 4, name: "Fatigue", description: "Extreme tiredness resulting from mental or physical exertion" },
+              { id: 5, name: "Shortness of breath", description: "Difficulty breathing or painful breathing" },
+              { id: 6, name: "Sore throat", description: "Pain or irritation in the throat" },
+              { id: 7, name: "Nausea", description: "Feeling of sickness with an inclination to vomit" },
+              { id: 8, name: "Dizziness", description: "Feeling faint, woozy, or unsteady" }
+            ])
+          }
         }
       } catch (error) {
+        console.error("Error fetching symptoms:", error)
         toast({
           variant: "destructive",
           title: "Error",
-          description: "An error occurred while loading symptoms.",
+          description: "An error occurred while loading symptoms. Please check your connection.",
         })
+        
+        // Use sample data in development for testing
+        if (process.env.NODE_ENV === "development") {
+          console.log("Using sample symptoms data in development mode")
+          setSymptoms([
+            { id: 1, name: "Headache", description: "Pain in the head or upper neck" },
+            { id: 2, name: "Fever", description: "Elevated body temperature above the normal range" },
+            { id: 3, name: "Cough", description: "Sudden expulsion of air from the lungs" },
+            { id: 4, name: "Fatigue", description: "Extreme tiredness resulting from mental or physical exertion" },
+            { id: 5, name: "Shortness of breath", description: "Difficulty breathing or painful breathing" },
+            { id: 6, name: "Sore throat", description: "Pain or irritation in the throat" },
+            { id: 7, name: "Nausea", description: "Feeling of sickness with an inclination to vomit" },
+            { id: 8, name: "Dizziness", description: "Feeling faint, woozy, or unsteady" }
+          ])
+        }
       } finally {
         setIsLoading(false)
       }
@@ -68,7 +143,10 @@ export default function SymptomCheckerPage() {
     fetchSymptoms()
   }, [API_URL, toast])
 
-  const filteredSymptoms = symptoms.filter((symptom) => symptom.name.toLowerCase().includes(searchQuery.toLowerCase()))
+  const filteredSymptoms = symptoms.filter((symptom) => 
+    symptom.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (symptom.description && symptom.description.toLowerCase().includes(searchQuery.toLowerCase()))
+  )
 
   const handleSymptomToggle = (symptomId: number) => {
     setSelectedSymptoms((prev) =>
@@ -101,39 +179,88 @@ export default function SymptomCheckerPage() {
 
     try {
       const accessToken = localStorage.getItem("accessToken")
+      
+      const requestData = {
+        symptoms: selectedSymptoms,
+        additional_info: additionalInfo || undefined,
+      }
+      
+      console.log("Submitting symptom check with data:", requestData)
 
-      const response = await fetch(`${API_URL}/health/checks/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
+      const response = await fetchWithRetry(
+        `${API_URL}/health/checks/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(requestData),
         },
-        body: JSON.stringify({
-          symptoms: selectedSymptoms,
-          additional_info: additionalInfo || undefined,
-        }),
-      })
+        3 // Max retries
+      )
+      
+      console.log("Symptom check submission response status:", response.status)
 
       if (response.ok) {
-        const data = await response.json()
+        const responseText = await response.text()
+        // Use safeParseJSON to handle empty responses
+        const data = safeParseJSON(responseText, {})
+        console.log("Symptom check created successfully:", data)
+        
         toast({
           title: "Symptom check created",
           description: "Your symptoms have been recorded successfully.",
         })
-        router.push(`/symptom-checker/results/${data.id}`)
+        
+        // Navigate to results page with the check ID
+        if (data && data.id) {
+          router.push(`/symptom-checker/results/${data.id}`)
+        } else {
+          console.error("Missing ID in response:", data)
+          toast({
+            variant: "destructive",
+            title: "Error",
+            description: "Could not retrieve check ID. Please try again.",
+          })
+          // Redirect to dashboard as fallback
+          router.push("/dashboard")
+        }
       } else {
-        const errorData = await response.json()
+        // Use extractErrorMessage for consistent error handling
+        const errorMessage = await extractErrorMessage(
+          response, 
+          "Failed to create symptom check."
+        )
+        
+        console.error("Error creating symptom check:", response.status, errorMessage)
+        
+        // Special handling for common error codes
+        let displayMessage = errorMessage
+        
+        if (response.status === 401 || response.status === 403) {
+          displayMessage = "Authentication error. Please log in again."
+          // Force logout and redirect to login
+          localStorage.removeItem("accessToken")
+          router.push("/login")
+        } else if (response.status === 429) {
+          displayMessage = "Too many requests. Please try again in a moment."
+        } else if (response.status >= 500) {
+          displayMessage = "Server error. Please try again later."
+        }
+        
         toast({
           variant: "destructive",
           title: "Error",
-          description: errorData.detail || "Failed to create symptom check.",
+          description: displayMessage,
         })
       }
     } catch (error) {
+      console.error("Error submitting symptom check:", error)
       toast({
         variant: "destructive",
         title: "Error",
-        description: "An error occurred. Please try again.",
+        description: "An error occurred. Please check your connection and try again.",
       })
     } finally {
       setIsSubmitting(false)
@@ -180,7 +307,7 @@ export default function SymptomCheckerPage() {
               ) : filteredSymptoms.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredSymptoms.map((symptom) => (
-                    <div key={symptom.id} className="flex items-start space-x-2">
+                    <div key={`symptom-${symptom.id}`} className="flex items-start space-x-2">
                       <Checkbox
                         id={`symptom-${symptom.id}`}
                         checked={selectedSymptoms.includes(symptom.id)}

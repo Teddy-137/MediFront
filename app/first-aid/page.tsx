@@ -28,51 +28,133 @@ export default function FirstAidPage() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://medihelp-backend.onrender.com/api"
 
   useEffect(() => {
-    const fetchFirstAidContent = async () => {
+    // Function to fetch first aid guides
+    const fetchFirstAidGuides = async () => {
       try {
-        // Fetch first aid guides
-        const firstAidResponse = await fetch(`${API_URL}/firstaid/?type=firstaid`)
-
-        // Fetch home remedies
-        const remediesResponse = await fetch(`${API_URL}/firstaid/?type=homeremedy`)
-
-        if (firstAidResponse.ok && remediesResponse.ok) {
-          const firstAidData = await firstAidResponse.json()
-          const remediesData = await remediesResponse.json()
-
-          setFirstAidGuides(firstAidData.results || [])
-          setHomeRemedies(remediesData.results || [])
-        } else {
+        const url = `${API_URL}/firstaid/?type=firstaid`
+        console.log("Fetching first aid guides from:", url)
+        
+        const response = await fetch(url)
+        console.log("First aid response status:", response.status)
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`)
+        }
+        
+        const data = await response.json()
+        console.log("First aid data received:", data)
+        
+        // Process the data
+        const items = Array.isArray(data) ? data : (data.results || [])
+        
+        const processedItems = items.map(item => ({
+          id: item.id,
+          title: item.title || "",
+          summary: item.description || item.summary || "",
+          content: item.steps ? item.steps.join("\n") : (item.content || ""),
+          type: "firstaid" as const,
+          severity_level: getSeverityLevel(item.severity_level),
+          created_at: item.created_at || new Date().toISOString()
+        }))
+        
+        setFirstAidGuides(processedItems)
+        return true
+      } catch (error) {
+        console.error("Error fetching first aid guides:", error)
+        return false
+      }
+    }
+    
+    // Function to fetch home remedies - updated to use the dedicated endpoint
+    const fetchHomeRemedies = async () => {
+      try {
+        // Use the dedicated home remedies endpoint
+        const url = `${API_URL}/firstaid/remedies/`
+        console.log("Fetching home remedies from:", url)
+        
+        const response = await fetch(url)
+        console.log("Home remedies response status:", response.status)
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`)
+        }
+        
+        const data = await response.json()
+        console.log("Home remedies data received:", data)
+        
+        // Process the data
+        const items = Array.isArray(data) ? data : (data.results || [])
+        
+        const processedItems = items.map(item => ({
+          id: item.id,
+          title: item.name || item.title || "",
+          summary: item.preparation || item.description || "",
+          content: item.ingredients ? "Ingredients: " + item.ingredients.join(", ") : (item.content || ""),
+          type: "homeremedy" as const,
+          created_at: item.created_at || new Date().toISOString()
+        }))
+        
+        setHomeRemedies(processedItems)
+        return true
+      } catch (error) {
+        console.error("Error fetching home remedies:", error)
+        return false
+      }
+    }
+    
+    // Helper function to normalize severity level
+    const getSeverityLevel = (level: any): "low" | "medium" | "high" => {
+      if (typeof level === 'number') {
+        return level === 3 ? "high" : level === 2 ? "medium" : "low"
+      }
+      if (typeof level === 'string' && ["low", "medium", "high"].includes(level.toLowerCase())) {
+        return level.toLowerCase() as "low" | "medium" | "high"
+      }
+      return "medium"
+    }
+    
+    // Main fetch function
+    const fetchData = async () => {
+      setIsLoading(true)
+      
+      try {
+        const [firstAidSuccess, remediesSuccess] = await Promise.all([
+          fetchFirstAidGuides(),
+          fetchHomeRemedies()
+        ])
+        
+        if (!firstAidSuccess && !remediesSuccess) {
           toast({
             variant: "destructive",
-            title: "Error",
-            description: "Failed to load first aid content. Please try again.",
+            title: "Connection Error",
+            description: "Failed to load first aid content. Please check your internet connection.",
           })
         }
       } catch (error) {
+        console.error("Error in data fetching:", error)
         toast({
           variant: "destructive",
           title: "Error",
-          description: "An error occurred while loading content.",
+          description: "An unexpected error occurred while loading content.",
         })
       } finally {
         setIsLoading(false)
       }
     }
-
-    fetchFirstAidContent()
+    
+    fetchData()
   }, [API_URL, toast])
 
   const filteredFirstAidGuides = firstAidGuides.filter(
     (guide) =>
       guide.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      guide.summary.toLowerCase().includes(searchQuery.toLowerCase()),
+      guide.summary.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const filteredHomeRemedies = homeRemedies.filter(
     (remedy) =>
       remedy.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      remedy.summary.toLowerCase().includes(searchQuery.toLowerCase()),
+      remedy.summary.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   return (

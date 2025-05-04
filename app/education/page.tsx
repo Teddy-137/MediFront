@@ -8,23 +8,93 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/use-toast"
-import { BookOpen, Search, VideoIcon, Clock, Calendar, ArrowRight } from "lucide-react"
+import { BookOpen, Search, VideoIcon, Clock, Calendar, ArrowRight, X } from "lucide-react"
+import { Dialog, DialogContent, DialogClose, DialogTitle } from "@/components/ui/dialog"
 
+// Type definition for Article
 type Article = {
   id: number
   title: string
   summary: string
   content: string
-  tags: string[]
+  tags?: string[]
   is_published: boolean
   published_date: string
   related_conditions?: { id: number; name: string }[]
 }
 
+// Function to extract YouTube video ID from various YouTube URL formats
+const extractYouTubeVideoId = (url: string): string | null => {
+  if (!url) return null;
+  
+  // Match patterns like:
+  // - https://www.youtube.com/watch?v=VIDEO_ID
+  // - https://youtu.be/VIDEO_ID
+  // - https://www.youtube.com/embed/VIDEO_ID
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([^&?\/\s]{11})/,
+    /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=))([^"&?\/\s]{11})/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  return null;
+};
+
+// Function to get YouTube thumbnail URL from video ID
+const getYouTubeThumbnailUrl = (videoId: string): string => {
+  return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+};
+
+// Add VideoPlayerModal component
+type VideoPlayerProps = {
+  isOpen: boolean
+  onClose: () => void
+  videoId: string | null
+  videoUrl: string | null
+  title: string
+}
+
+const VideoPlayerModal = ({ isOpen, onClose, videoId, videoUrl, title }: VideoPlayerProps) => {
+  const embedUrl = videoId 
+    ? `https://www.youtube.com/embed/${videoId}?autoplay=1` 
+    : videoUrl;
+  
+  if (!isOpen) return null;
+  
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[800px] p-0 overflow-hidden bg-black">
+        {/* Add DialogTitle for accessibility, but visually hide it */}
+        <DialogTitle className="sr-only">{title}</DialogTitle>
+        <div className="relative pt-[56.25%] w-full">
+          <iframe
+            className="absolute top-0 left-0 w-full h-full"
+            src={embedUrl}
+            title={title}
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          ></iframe>
+        </div>
+        <DialogClose className="absolute top-2 right-2 rounded-full p-2 bg-black/70 text-white hover:bg-black/90">
+          <X className="h-4 w-4" />
+        </DialogClose>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 type VideoContent = {
   id: number
   title: string
-  youtube_url: string
+  video_url?: string
+  youtube_url?: string
   duration_minutes: number
   is_published: boolean
   published_date: string
@@ -39,24 +109,91 @@ export default function EducationPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const { toast } = useToast()
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://medihelp-backend.onrender.com/api"
-
+  
+  // Add state for video player modal
+  const [videoPlayerOpen, setVideoPlayerOpen] = useState(false)
+  const [currentVideo, setCurrentVideo] = useState<{id: string | null, url: string | null, title: string}>({
+    id: null,
+    url: null,
+    title: ""
+  })
+  
+  // Track which videos are currently playing inline
+  const [playingVideos, setPlayingVideos] = useState<Record<number, boolean>>({})
+  
+  // Function to open video player modal
+  const openVideoPlayer = (video: VideoContent) => {
+    const videoUrl = video.video_url || video.youtube_url;
+    const youtubeId = extractYouTubeVideoId(videoUrl || "");
+    
+    setCurrentVideo({
+      id: youtubeId,
+      url: youtubeId ? null : videoUrl,
+      title: video.title
+    });
+    
+    setVideoPlayerOpen(true);
+  };
+  
+  // Function to toggle inline video playback
+  const toggleVideoPlay = (videoId: number) => {
+    setPlayingVideos(prev => ({
+      ...prev,
+      [videoId]: !prev[videoId]
+    }))
+  }
+  
   useEffect(() => {
     const fetchEducationalContent = async () => {
       try {
+        console.log("Fetching educational content from API:", API_URL);
+        
         // Fetch articles
-        const articlesResponse = await fetch(`${API_URL}/content/articles/`)
+        const articlesResponse = await fetch(`${API_URL}/content/articles/`);
+        console.log("Articles response status:", articlesResponse.status);
 
         // Fetch videos
-        const videosResponse = await fetch(`${API_URL}/content/videos/`)
+        const videosResponse = await fetch(`${API_URL}/content/videos/`);
+        console.log("Videos response status:", videosResponse.status);
 
         if (articlesResponse.ok && videosResponse.ok) {
-          const articlesData = await articlesResponse.json()
-          const videosData = await videosResponse.json()
+          const articlesData = await articlesResponse.json();
+          const videosData = await videosResponse.json();
+          
+          console.log("Articles data:", articlesData);
+          console.log("Videos data:", videosData);
 
-          setArticles(articlesData.results || [])
-          setVideos(videosData.results || [])
+          // Process articles data
+          const processedArticles = articlesData.results || articlesData || [];
+          setArticles(processedArticles);
+          
+          // Process videos data - handle both video_url and youtube_url fields
+          const processedVideos = (videosData.results || videosData || []).map((video: any) => {
+            // Get the video URL (prefer video_url, fall back to youtube_url)
+            const videoUrl = video.video_url || video.youtube_url;
+            
+            // Extract YouTube video ID if it's a YouTube URL
+            const youtubeId = extractYouTubeVideoId(videoUrl);
+            
+            // Generate thumbnail URL if it's a YouTube video
+            const thumbnailUrl = youtubeId 
+              ? getYouTubeThumbnailUrl(youtubeId)
+              : (video.thumbnail_url || "/placeholder.svg?height=180&width=320");
+            
+            return {
+              ...video,
+              // Ensure video_url exists
+              video_url: videoUrl || "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+              // Use YouTube thumbnail or fallback
+              thumbnail_url: thumbnailUrl
+            };
+          });
+          
+          setVideos(processedVideos);
         } else {
           // For demo purposes, create some sample content
+          console.log("Using sample data due to API response issues");
+          
           const sampleArticles: Article[] = [
             {
               id: 1,
@@ -195,6 +332,8 @@ export default function EducationPage() {
           setVideos(sampleVideos)
         }
       } catch (error) {
+        console.error("Error fetching educational content:", error);
+        
         // For demo purposes, create some sample content
         const sampleArticles: Article[] = [
           {
@@ -452,58 +591,108 @@ export default function EducationPage() {
               </div>
             ) : filteredVideos.length > 0 ? (
               <div className="grid gap-6 md:grid-cols-2">
-                {filteredVideos.map((video) => (
-                  <Card key={video.id} className="flex flex-col h-full">
-                    <div className="relative">
-                      <Image
-                        src={video.thumbnail_url || "/placeholder.svg?height=180&width=320"}
-                        alt={video.title}
-                        width={320}
-                        height={180}
-                        className="w-full h-[180px] object-cover rounded-t-lg"
-                      />
-                      <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 text-white rounded-md text-xs flex items-center">
-                        <Clock className="h-3 w-3 mr-1" />
-                        {video.duration_minutes} min
-                      </div>
-                    </div>
-                    <CardHeader>
-                      <CardTitle className="text-xl">{video.title}</CardTitle>
-                      <CardDescription className="flex items-center text-xs">
-                        <Calendar className="h-3 w-3 mr-1" />
-                        Published: {new Date(video.published_date).toLocaleDateString()}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex-1">
-                      {video.related_symptoms && video.related_symptoms.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          <p className="text-xs font-medium mr-1">Related:</p>
-                          {video.related_symptoms.map((symptom) => (
-                            <span
-                              key={symptom.id}
-                              className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary"
+                {filteredVideos.map((video) => {
+                  const videoUrl = video.video_url || video.youtube_url || "";
+                  const youtubeId = extractYouTubeVideoId(videoUrl);
+                  const isPlaying = playingVideos[video.id] || false;
+                  
+                  return (
+                    <Card key={video.id} className="flex flex-col h-full overflow-hidden">
+                      <div className="relative">
+                        {isPlaying && youtubeId ? (
+                          <div className="relative pt-[56.25%] w-full" aria-label={`Now playing: ${video.title}`}>
+                            <iframe
+                              className="absolute top-0 left-0 w-full h-full"
+                              src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
+                              title={video.title}
+                              frameBorder="0"
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                            ></iframe>
+                            <button 
+                              className="absolute top-2 right-2 rounded-full p-2 bg-black/70 text-white hover:bg-black/90 z-10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleVideoPlay(video.id);
+                              }}
+                              aria-label={`Close ${video.title} video`}
                             >
-                              {symptom.name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                    <CardFooter>
-                      <Button asChild className="w-full">
-                        <a
-                          href={video.youtube_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-center"
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="relative group">
+                            <Image
+                              src={video.thumbnail_url || "/placeholder.svg?height=180&width=320"}
+                              alt={`Thumbnail for ${video.title}`}
+                              width={320}
+                              height={180}
+                              className="w-full h-[180px] object-cover transition-transform duration-300 group-hover:scale-105"
+                            />
+                            {/* YouTube-style play button overlay */}
+                            <button 
+                              className="absolute inset-0 flex items-center justify-center bg-transparent border-0 cursor-pointer w-full h-full"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                toggleVideoPlay(video.id);
+                              }}
+                              aria-label={`Play ${video.title} video`}
+                            >
+                              <div className="w-12 h-12 rounded-full bg-black/70 flex items-center justify-center group-hover:bg-red-600 transition-colors">
+                                <VideoIcon className="h-6 w-6 text-white" />
+                              </div>
+                            </button>
+                            {/* Duration badge - only show if available */}
+                            {video.duration_minutes > 0 && (
+                              <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded">
+                                {video.duration_minutes} min
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-lg line-clamp-2">
+                          {video.title}
+                        </CardTitle>
+                        <CardDescription className="flex items-center text-xs">
+                          <Calendar className="h-3 w-3 mr-1" />
+                          {new Date(video.published_date).toLocaleDateString()}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex-1 pt-0">
+                        {video.related_symptoms && video.related_symptoms.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            <p className="text-xs font-medium mr-1">Related:</p>
+                            {video.related_symptoms.map((symptom) => (
+                              <span
+                                key={symptom.id}
+                                className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary"
+                              >
+                                {symptom.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </CardContent>
+                      <CardFooter>
+                        <Button 
+                          className="w-full"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            toggleVideoPlay(video.id);
+                          }}
+                          aria-label={isPlaying ? `Close ${video.title} video` : `Watch ${video.title} video`}
                         >
-                          Watch Video
-                          <VideoIcon className="ml-2 h-4 w-4" />
-                        </a>
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                ))}
+                          <span className="flex items-center justify-center">
+                            {isPlaying ? "Close Video" : "Watch Video"}
+                            {isPlaying ? <X className="ml-2 h-4 w-4" /> : <VideoIcon className="ml-2 h-4 w-4" />}
+                          </span>
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-12">
@@ -517,6 +706,15 @@ export default function EducationPage() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* Video Player Modal */}
+        <VideoPlayerModal
+          isOpen={videoPlayerOpen}
+          onClose={() => setVideoPlayerOpen(false)}
+          videoId={currentVideo.id}
+          videoUrl={currentVideo.url}
+          title={currentVideo.title}
+        />
 
         <div className="mt-12 p-6 border rounded-lg bg-muted/50 text-center">
           <h3 className="text-xl font-bold mb-2">Have a specific health question?</h3>
